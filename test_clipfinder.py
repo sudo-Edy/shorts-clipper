@@ -94,3 +94,18 @@ def test_phrases_split_at_pauses():
     words = [(20.0, 20.4, " Okay"), (20.5, 21.0, " looting."), (96.0, 96.4, " No"), (96.5, 96.9, " way!")]
     segs = phrases(words)
     assert [(s.start, s.end, s.text) for s in segs] == [(20.0, 21.0, "Okay looting."), (96.0, 96.9, "No way!")]
+
+
+def test_timecode_and_edl(tmp_path):
+    from clipfinder import timecode, write_edl
+    assert timecode(0, 60) == "01:00:00:00"
+    assert timecode(95.5, 60) == "01:01:35:30"
+    assert timecode(3723, 30, start_hour=0) == "01:02:03:00"
+    edl = tmp_path / "m.edl"
+    cands = [Candidate(95.5, 125.5, 90, ["you marked it (clutch | 1v3)"]), Candidate(10, 40, 5, [])]
+    write_edl(edl, cands, 60)
+    text = edl.read_text()
+    assert text.startswith("TITLE: Shorts candidates\nFCM: NON-DROP FRAME\n")
+    assert "001  001      V     C        01:01:35:30 01:01:35:31 01:01:35:30 01:01:35:31" in text
+    assert " |C:ResolveColorRed |M:#1 you marked it (clutch / 1v3) |D:1800" in text
+    assert "|M:#2 loud stretch |D:1800" in text

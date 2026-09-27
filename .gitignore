@@ -5,3 +5,4 @@ __pycache__/
 *.mkv
 *.mov
 *.wav
+*_shorts.edl

@@ -24,6 +24,14 @@ ffmpeg must be on PATH. The first run downloads the Whisper model (large-v3 ≈ 
    ```
 3. Open `session1_shorts.csv`: rank, start, end, duration, score, why, transcript.
 
+4. In DaVinci Resolve (or CutPilot's timeline), put the recording at the start of a
+   timeline, then **Timeline > Import > Timeline Markers from EDL** and pick
+   `session1_shorts.edl`: every clip becomes a duration marker (red = top 5,
+   yellow = 6-10, blue = the rest) named with its reason. Use `--fps` if the
+   timeline's frame rate differs from the video's, and `--timeline-start-hour 0`
+   if the timeline starts at 00:00:00:00. (Format follows Resolve's marker-EDL
+   export; not yet confirmed by an import on this PC.)
+
 Options: `--count 20` (max clips), `--model medium` (faster, less accurate),
 `--no-transcribe` (marks + loudness only), `--out path.csv`.
 

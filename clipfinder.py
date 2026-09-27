@@ -357,6 +357,40 @@ def write_csv(path: Path, cands: list[Candidate]) -> None:
             w.writerow([i, fmt(c.start), fmt(c.end), round(c.duration), round(c.score), why, c.text[:200]])
 
 
+def timecode(seconds: float, fps: int, start_hour: int = 1) -> str:
+    frames = int(round(seconds * fps)) + start_hour * 3600 * fps
+    f = frames % fps
+    total = frames // fps
+    return f"{total // 3600:02d}:{total // 60 % 60:02d}:{total % 60:02d}:{f:02d}"
+
+
+def write_edl(path: Path, cands: list[Candidate], fps: int, start_hour: int = 1) -> None:
+    """Timeline markers for DaVinci Resolve (Timeline > Import > Timeline Markers from EDL).
+
+    One duration marker per clip: red = top 5, yellow = 6-10, blue = the rest.
+    Times assume the recording starts at the timeline's start (Resolve default 01:00:00:00).
+    """
+    lines = ["TITLE: Shorts candidates", "FCM: NON-DROP FRAME", ""]
+    for i, c in enumerate(cands, 1):
+        color = "Red" if i <= 5 else "Yellow" if i <= 10 else "Blue"
+        tc_in, tc_out = timecode(c.start, fps, start_hour), timecode(c.start + 1 / fps, fps, start_hour)
+        name = f"#{i} {'; '.join(c.reasons) or 'loud stretch'}".replace("|", "/")[:80]
+        lines.append(f"{i:03d}  001      V     C        {tc_in} {tc_out} {tc_in} {tc_out}  ")
+        lines.append(f" |C:ResolveColor{color} |M:{name} |D:{max(1, int(round(c.duration * fps)))}")
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def probe_fps(media: Path) -> int:
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                            "-of", "csv=p=0", str(media)], capture_output=True, text=True, check=True)
+        num, _, den = r.stdout.strip().partition("/")
+        return max(1, round(float(num) / float(den or 1)))
+    except Exception:
+        return 30  # audio-only or unreadable: any rate works for markers
+
+
 def safe_output(out: Path, media: Path) -> Path:
     if out.suffix.lower() != ".csv":
         raise SystemExit(f"Output must be a .csv file, got {out}")
@@ -373,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--count", type=int, default=20, help="max clips (default 20)")
     p.add_argument("--model", default="large-v3", help="faster-whisper model (large-v3, medium, small...)")
     p.add_argument("--no-transcribe", action="store_true", help="skip speech; use marks + audio energy only")
+    p.add_argument("--fps", type=int, help="timeline frame rate for the EDL markers (default: the video's)")
+    p.add_argument("--timeline-start-hour", type=int, default=1, help="timeline start hour for the EDL (Resolve default 1)")
     args = p.parse_args(argv)
 
     if not args.recording.is_file():
@@ -399,7 +435,9 @@ def main(argv: list[str] | None = None) -> int:
     kept = rank(build_candidates(duration, peaks, marks, segments), limit=args.count)
     kept = fill_to_minimum(kept, db, duration, segments, minimum=min(15, args.count), limit=args.count)
     write_csv(out, kept)
-    print(f"{len(kept)} clips -> {out}", file=sys.stderr)
+    edl = out.with_suffix(".edl")
+    write_edl(edl, kept, args.fps or probe_fps(args.recording), args.timeline_start_hour)
+    print(f"{len(kept)} clips -> {out} (+ Resolve markers: {edl.name})", file=sys.stderr)
     for i, c in enumerate(kept[:5], 1):
         print(f"  {i}. {fmt(c.start)}-{fmt(c.end)}  {'; '.join(c.reasons)}", file=sys.stderr)
     return 0
