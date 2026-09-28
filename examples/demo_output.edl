@@ -1,0 +1,50 @@
+TITLE: Shorts candidates
+FCM: NON-DROP FRAME
+
+001  001      V     C        01:00:50:00 01:00:50:01 01:00:50:00 01:00:50:01  
+ |C:ResolveColorRed |M:#1 you marked it (clutch 1v3); big audio spike |D:900
+
+002  001      V     C        01:13:40:00 01:13:40:01 01:13:40:00 01:13:40:01  
+ |C:ResolveColorRed |M:#2 you marked it (victory); big audio spike |D:900
+
+003  001      V     C        01:06:20:22 01:06:20:24 01:06:20:22 01:06:20:24  
+ |C:ResolveColorRed |M:#3 you marked it (ace round); big audio spike |D:900
+
+004  001      V     C        01:10:50:00 01:10:50:01 01:10:50:00 01:10:50:01  
+ |C:ResolveColorRed |M:#4 you marked it (near-death comeback); big audio spike |D:900
+
+005  001      V     C        01:03:35:00 01:03:35:01 01:03:35:00 01:03:35:01  
+ |C:ResolveColorRed |M:#5 you marked it (boss fight start); big audio spike |D:900
+
+006  001      V     C        01:04:31:22 01:04:31:24 01:04:31:22 01:04:31:24  
+ |C:ResolveColorYellow |M:#6 big audio spike |D:900
+
+007  001      V     C        01:02:42:08 01:02:42:08 01:02:42:08 01:02:42:08  
+ |C:ResolveColorYellow |M:#7 big audio spike |D:900
+
+008  001      V     C        01:11:51:22 01:11:51:24 01:11:51:22 01:11:51:24  
+ |C:ResolveColorYellow |M:#8 big audio spike |D:900
+
+009  001      V     C        01:05:26:08 01:05:26:08 01:05:26:08 01:05:26:08  
+ |C:ResolveColorYellow |M:#9 big audio spike |D:900
+
+010  001      V     C        01:10:02:08 01:10:02:08 01:10:02:08 01:10:02:08  
+ |C:ResolveColorYellow |M:#10 big audio spike |D:900
+
+011  001      V     C        01:08:11:22 01:08:11:24 01:08:11:22 01:08:11:24  
+ |C:ResolveColorBlue |M:#11 big audio spike |D:900
+
+012  001      V     C        01:07:16:22 01:07:16:24 01:07:16:22 01:07:16:24  
+ |C:ResolveColorBlue |M:#12 big audio spike |D:900
+
+013  001      V     C        01:09:05:22 01:09:05:24 01:09:05:22 01:09:05:24  
+ |C:ResolveColorBlue |M:#13 big audio spike |D:900
+
+014  001      V     C        01:01:45:22 01:01:45:24 01:01:45:22 01:01:45:24  
+ |C:ResolveColorBlue |M:#14 big audio spike |D:900
+
+015  001      V     C        01:14:21:22 01:14:21:24 01:14:21:22 01:14:21:24  
+ |C:ResolveColorBlue |M:#15 big audio spike |D:900
+
+016  001      V     C        01:12:47:08 01:12:47:08 01:12:47:08 01:12:47:08  
+ |C:ResolveColorBlue |M:#16 big audio spike |D:900

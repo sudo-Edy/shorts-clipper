@@ -48,3 +48,21 @@ Each clip starts ~10 s before the moment (the setup), runs ~30 s, and its edges
 snap to pauses in speech so nothing is cut mid-word. Overlapping clips are
 dropped; a quiet recording is topped up to 15 with its loudest remaining
 stretches. A 6-minute test recording takes ~12 s on an RTX 4090 with large-v3.
+
+## Demo (no real recording needed)
+
+`examples/` has a synthetic-recording demo you can reproduce anywhere ffmpeg +
+numpy are installed, no GPU or gameplay footage required:
+
+```
+python examples/generate_demo.py                          # writes examples/demo/session.wav + marks.txt
+python clipfinder.py examples/demo/session.wav --notes examples/demo/marks.txt \
+    --no-transcribe --out examples/demo_output.csv
+```
+
+`examples/demo_output.csv` / `.edl` in this repo are real output from that
+15-minute synthetic recording (16 ranked clips, 30 s each, marked moments
+ranked first); `--no-transcribe` is used because the demo audio has no speech,
+not because transcription doesn't work — `test_end_to_end_cli_writes_15_to_20_clip_csv`
+in `test_clipfinder.py` runs the same CLI path on every test run and asserts
+the CSV lands in the 15-20 row range.

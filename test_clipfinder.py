@@ -1,9 +1,13 @@
+import csv
+import shutil
+import wave
+
 import numpy as np
 import pytest
 
 from clipfinder import (
     MAX_CLIP_S, MIN_CLIP_S, SAMPLE_RATE, Candidate, Mark, Segment, build_candidates, energy_curve,
-    fill_to_minimum, find_peaks, fmt, hype_hits, parse_notes, rank, safe_output, snap,
+    fill_to_minimum, find_peaks, fmt, hype_hits, main, parse_notes, rank, safe_output, snap,
 )
 from pathlib import Path
 
@@ -94,6 +98,44 @@ def test_phrases_split_at_pauses():
     words = [(20.0, 20.4, " Okay"), (20.5, 21.0, " looting."), (96.0, 96.4, " No"), (96.5, 96.9, " way!")]
     segs = phrases(words)
     assert [(s.start, s.end, s.text) for s in segs] == [(20.0, 21.0, "Okay looting."), (96.0, 96.9, "No way!")]
+
+
+def write_wav(path: Path, samples: np.ndarray, sr: int = SAMPLE_RATE) -> None:
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes((np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes())
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not on PATH")
+def test_end_to_end_cli_writes_15_to_20_clip_csv(tmp_path):
+    """Run the real CLI (ffmpeg decode -> candidates -> CSV) on a synthetic recording.
+
+    This is the done-when check itself, not just a claim about it: a 10-minute
+    recording with marks + loud bursts must come out the other end as an actual
+    CSV of 15-20 ranked clips, each 15-60s, each with a one-line reason.
+    """
+    duration = 600
+    bursts = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390, 430, 470, 510, 550, 580]
+    samples = synthetic(duration=duration, bursts=bursts)
+    recording = tmp_path / "rec.wav"
+    write_wav(recording, samples)
+    notes = tmp_path / "marks.txt"
+    notes.write_text("0:30 clutch 1v3\n9:10 victory\n")
+    out = tmp_path / "rec_shorts.csv"
+
+    rc = main([str(recording), "--notes", str(notes), "--no-transcribe", "--out", str(out)])
+
+    assert rc == 0
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert 15 <= len(rows) <= 20
+    for row in rows:
+        assert MIN_CLIP_S <= int(row["duration_s"]) <= MAX_CLIP_S
+        assert row["why"]
+    assert any("clutch" in r["why"] for r in rows)
+    assert any("victory" in r["why"] for r in rows)
+    assert out.with_suffix(".edl").exists()
 
 
 def test_timecode_and_edl(tmp_path):
