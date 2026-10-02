@@ -231,15 +231,17 @@ def transcribe_words(audio: Path, model_name: str) -> list[Word]:
         return run(device="cpu", compute_type="int8")
 
 
-def phrases(words: list[tuple[float, float, str]], max_gap_s: float = 1.0) -> list[Segment]:
-    """Group timed words into phrases split at pauses.
+def phrases(words: list[tuple[float, float, str]], max_gap_s: float = 1.0,
+            max_len_s: float = 10.0) -> list[Segment]:
+    """Group timed words into phrases split at pauses (and every max_len_s).
 
     Whisper's own segments can stretch across a minute of silence, which would
-    smear a reaction ("no way!") onto the wrong clip; word timings don't.
+    smear a reaction ("no way!") onto the wrong clip; word timings don't. Nonstop
+    multiplayer chatter has no pauses at all, so phrases are also capped in length.
     """
     out: list[Segment] = []
     for start, end, word in words:
-        if out and start - out[-1].end <= max_gap_s:
+        if out and start - out[-1].end <= max_gap_s and end - out[-1].start <= max_len_s:
             out[-1].end = end
             out[-1].text += word
         else:
@@ -491,13 +493,16 @@ def render_cmd(media: Path, start: float, end: float, out: Path, layout: str = "
 
 
 def render_shorts(media: Path, cands: list[Candidate], words: list[Word], out_dir: Path, count: int,
-                  layout: str = "crop", crop_x: float = 0.5, captions: bool = True, audio_track: int = 0) -> list[Path]:
-    """Render the top `count` candidates as 1080x1920 mp4s. Never touches the source."""
+                  layout: str = "crop", crop_x: float = 0.5, captions: bool = True, audio_track: int = 0,
+                  labels: list[int] | None = None) -> list[Path]:
+    """Render the top `count` candidates as 1080x1920 mp4s. Never touches the source.
+    labels: the rank number to put in each file name (default 1, 2, 3...)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     made: list[Path] = []
     gpu = has_nvenc()
     for i, c in enumerate(cands[:count], 1):
-        out = out_dir / f"{i:02d}_{fmt(c.start).replace(':', '-')}.mp4"
+        n = labels[i - 1] if labels and i - 1 < len(labels) else i
+        out = out_dir / f"{n:02d}_{fmt(c.start).replace(':', '-')}.mp4"
         if out.resolve() == media.resolve():
             raise SystemExit("Refusing to write over the source recording.")
         with tempfile.TemporaryDirectory(prefix="clipfinder-cap-") as tmp:

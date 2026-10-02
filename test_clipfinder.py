@@ -193,3 +193,10 @@ def test_render_produces_vertical_mp4(tmp_path):
     dur = float(r.stdout.strip().splitlines()[-1])
     assert 15.5 <= dur <= 16.5
     assert src.stat().st_size > 0  # source untouched
+
+
+def test_phrases_capped_in_nonstop_chatter():
+    from clipfinder import phrases
+    words = [(i * 0.4, i * 0.4 + 0.3, " w") for i in range(100)]   # 40 s, never pauses
+    ph = phrases(words)
+    assert len(ph) >= 4 and all(p.end - p.start <= 10.0 for p in ph)
