@@ -1,7 +1,8 @@
 # shorts-clipper
 
 Finds the best 15–60 second Shorts moments in a gameplay recording and writes a
-ranked CSV. It only reads your video; the one file it writes is the CSV.
+ranked CSV. It only reads your video; it writes the CSV + a Resolve marker EDL, and (with
+`--render N`) the finished vertical Shorts.
 
 ## Setup (Windows, once)
 
@@ -31,6 +32,20 @@ ffmpeg must be on PATH. The first run downloads the Whisper model (large-v3 ≈ 
    timeline's frame rate differs from the video's, and `--timeline-start-hour 0`
    if the timeline starts at 00:00:00:00. (Format follows Resolve's marker-EDL
    export; not yet confirmed by an import on this PC.)
+
+5. **Render the Shorts themselves** (optional): add `--render 5` and the top 5
+   come out as finished 1080x1920 mp4s in `session1_shorts_clips/`, with big
+   word-by-word captions burned in (3 words max, never flashing).
+   ```
+   python clipfinder.py "D:\recordings\session1.mp4" --notes marks.txt --render 5
+   ```
+   - `--layout crop` (default) fills the frame with a 9:16 slice; `--crop-x 0.2`
+     slides it left (e.g. toward a facecam). `--layout fit` shows the whole
+     gameplay frame over a blurred copy of itself, so no HUD is lost.
+   - `--audio-track 2` picks which OBS track goes into the Short (default: the first).
+   - `--no-captions` for clean clips. GPU (NVENC) encode, CPU fallback.
+   - Real run: 20-min 1080p OBS recording -> transcript (large-v3, RTX 4090) +
+     ranked CSV + 3 rendered Shorts in 2 min 19 s.
 
 Options: `--count 20` (max clips), `--model medium` (faster, less accurate),
 `--no-transcribe` (marks + loudness only), `--out path.csv`.

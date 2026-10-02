@@ -151,3 +151,45 @@ def test_timecode_and_edl(tmp_path):
     assert "001  001      V     C        01:01:35:30 01:01:35:31 01:01:35:30 01:01:35:31" in text
     assert " |C:ResolveColorRed |M:#1 you marked it (clutch / 1v3) |D:1800" in text
     assert "|M:#2 loud stretch |D:1800" in text
+
+
+def test_caption_chunks_short_relative_and_no_flicker():
+    from clipfinder import caption_chunks
+    words = [(10.0, 10.2, " no"), (10.2, 10.4, " way"), (10.4, 10.6, " bro,"), (10.6, 10.8, " look"),
+             (12.0, 12.3, " run!"), (30.0, 30.5, " outside")]
+    ch = caption_chunks(words, 10.0, 20.0)
+    assert ch[0] == (0.0, 0.4, "NO WAY")                # closes at 2 words once it lasts 0.35 s
+    assert ch[1][2] == "BRO"                            # trailing comma stripped, comma closes the cue
+    assert ch[2][2] == "LOOK" and ch[3][2] == "RUN!"    # pause >= 0.3 s splits
+    assert all(ch[i][1] <= ch[i + 1][0] for i in range(len(ch) - 1))  # no overlaps
+    assert all(e > s for s, e, _ in ch) and all(e <= 10.0 + 1e-6 for _, e, _ in ch[:-1])
+    assert "OUTSIDE" not in " ".join(t for *_, t in ch)  # outside the clip window
+
+
+def test_ass_and_filters_are_well_formed():
+    from clipfinder import ass_captions, vertical_filter, render_cmd
+    ass = ass_captions([(0.0, 1.0, "HI {X}")])
+    assert "PlayResX: 1080" in ass and "Dialogue: 0,0:00:00.00,0:00:01.00,Cap" in ass and "{X}" not in ass
+    assert vertical_filter("crop", 0.0).endswith("[v]") and "*0.0" in vertical_filter("crop", 0.0)
+    assert "boxblur" in vertical_filter("fit") and "subtitles=caps.ass" in vertical_filter("fit", captions="caps.ass")
+    cmd = render_cmd(Path("in.mp4"), 5, 35, Path("o.mp4"), gpu=False)
+    assert cmd[cmd.index("-ss") + 1] == "5.000" and "libx264" in cmd and "0:a:0?" in cmd
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_render_produces_vertical_mp4(tmp_path):
+    import subprocess
+    from clipfinder import Candidate, render_shorts
+    src = tmp_path / "game.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=20",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=20", "-c:v", "libx264", "-c:a", "aac",
+                    "-shortest", str(src)], check=True)
+    words = [(2.0, 2.4, " LETS"), (2.4, 2.8, " GO")]
+    made = render_shorts(src, [Candidate(1.0, 17.0)], words, tmp_path / "clips", 1)
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height:format=duration", "-of", "csv=p=0", str(made[0])],
+                       capture_output=True, text=True, check=True)
+    assert "1080,1920" in r.stdout
+    dur = float(r.stdout.strip().splitlines()[-1])
+    assert 15.5 <= dur <= 16.5
+    assert src.stat().st_size > 0  # source untouched

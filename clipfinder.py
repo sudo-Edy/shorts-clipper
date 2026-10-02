@@ -201,12 +201,19 @@ def add_nvidia_dll_dirs() -> None:
             os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
 
 
+Word = tuple[float, float, str]
+
+
 def transcribe(audio: Path, model_name: str) -> list[Segment]:
+    return phrases(transcribe_words(audio, model_name))
+
+
+def transcribe_words(audio: Path, model_name: str) -> list[Word]:
     use_system_certificates()
     add_nvidia_dll_dirs()
     from faster_whisper import WhisperModel
 
-    def run(**kw) -> list[Segment]:
+    def run(**kw) -> list[Word]:
         # use the cached model when there is one; download only when it's missing
         try:
             model = WhisperModel(model_name, local_files_only=True, **kw)
@@ -214,8 +221,7 @@ def transcribe(audio: Path, model_name: str) -> list[Segment]:
             model = WhisperModel(model_name, **kw)
         segments, _ = model.transcribe(str(audio), vad_filter=True, word_timestamps=True)
         # segments is lazy: missing CUDA DLLs only fail here, so consume it inside the try
-        words = [(w.start, w.end, w.word) for s in segments for w in (s.words or [])]
-        return phrases(words)
+        return [(w.start, w.end, w.word) for s in segments for w in (s.words or [])]
 
     try:
         return run(device="cuda", compute_type="float16")
@@ -381,6 +387,143 @@ def write_edl(path: Path, cands: list[Candidate], fps: int, start_hour: int = 1)
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ---------- rendering vertical shorts ----------
+
+CAPTION_MAX_WORDS = 3
+CAPTION_MAX_S = 1.2
+
+
+def caption_chunks(words: list[Word], start: float, end: float,
+                   max_words: int = CAPTION_MAX_WORDS, max_s: float = CAPTION_MAX_S) -> list[tuple[float, float, str]]:
+    """Short punchy caption lines, timed relative to the clip start.
+
+    A chunk closes at max_words, at max_s, after punctuation, at a pause >= 0.3 s,
+    or at 2 words once it has lasted 0.35 s (stops fast talk flashing); each one
+    is held until the next starts (if that is soon) so captions don't flicker.
+    """
+    inside = [(max(s, start) - start, min(e, end) - start, w.strip()) for s, e, w in words
+              if e > start and s < end and w.strip()]
+    chunks: list[list] = []
+    closed = True
+    for s, e, w in inside:
+        cur = chunks[-1] if chunks else None
+        if (cur and not closed and len(cur[2]) < max_words and e - cur[0] <= max_s and s - cur[1] < 0.3
+                and not (len(cur[2]) >= 2 and cur[1] - cur[0] >= 0.35)):
+            cur[1] = e
+            cur[2].append(w)
+        else:
+            chunks.append([s, e, [w]])
+        closed = w[-1] in ".,!?;:"
+    out = []
+    for i, (s, e, ws) in enumerate(chunks):
+        nxt = chunks[i + 1][0] if i + 1 < len(chunks) else None
+        if nxt is not None and nxt - e < 0.5:
+            e = nxt
+        text = " ".join(ws).rstrip(",;:").upper()
+        e = max(e, s + 0.25)
+        if nxt is not None:
+            e = min(e, nxt)  # never overlap the next caption
+        out.append((round(s, 3), round(e, 3), text))
+    return out
+
+
+def _ass_time(t: float) -> str:
+    cs = int(round(max(0.0, t) * 100))
+    return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
+
+
+def ass_captions(chunks: list[tuple[float, float, str]], width: int = 1080, height: int = 1920) -> str:
+    """Big bold outlined captions in the lower third, the standard Shorts look."""
+    head = (
+        "[Script Info]\nScriptType: v4.00+\n"
+        f"PlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+        "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
+        "MarginR, MarginV, Encoding\n"
+        "Style: Cap,Arial Black,112,&H00FFFFFF,&H0000FFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,7,3,2,80,80,"
+        f"{int(height * 0.28)},1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    lines = [f"Dialogue: 0,{_ass_time(s)},{_ass_time(e)},Cap,,0,0,0,,{{\\fscx85\\fscy85\\t(0,80,\\fscx100\\fscy100)}}"
+             f"{t.replace('{', '(').replace('}', ')')}" for s, e, t in chunks]
+    return head + "\n".join(lines) + "\n"
+
+
+def vertical_filter(layout: str = "crop", crop_x: float = 0.5, captions: str | None = None) -> str:
+    """ffmpeg -filter_complex graph producing a 1080x1920 [v] stream.
+
+    crop: fill the frame with a 9:16 slice (crop_x 0=left edge, 0.5=centre, 1=right).
+    fit:  the whole landscape frame, centred over a blurred, zoomed copy of itself.
+    """
+    if layout == "fit":
+        g = ("[0:v]split=2[bg][fg];"
+             "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:2[bgb];"
+             "[fg]scale=1080:-2[fgs];[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1")
+    else:
+        g = f"[0:v]crop='min(iw,ih*9/16)':ih:'(iw-min(iw,ih*9/16))*{min(1.0, max(0.0, crop_x))}':0,scale=1080:1920,setsar=1"
+    if captions:
+        g += f",subtitles={captions}"
+    return g + "[v]"
+
+
+_ENCODER_CACHE: dict[str, bool] = {}
+
+
+def has_nvenc() -> bool:
+    if "nvenc" not in _ENCODER_CACHE:
+        try:
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True)
+            _ENCODER_CACHE["nvenc"] = "h264_nvenc" in r.stdout
+        except Exception:
+            _ENCODER_CACHE["nvenc"] = False
+    return _ENCODER_CACHE["nvenc"]
+
+
+def render_cmd(media: Path, start: float, end: float, out: Path, layout: str = "crop", crop_x: float = 0.5,
+               captions: str | None = None, audio_track: int = 0, gpu: bool = True) -> list[str]:
+    venc = (["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"] if gpu
+            else ["-c:v", "libx264", "-preset", "medium", "-crf", "20"])
+    return (["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(media),
+             "-filter_complex", vertical_filter(layout, crop_x, captions), "-map", "[v]",
+             "-map", f"0:a:{audio_track}?", "-r", "30"] + venc +
+            ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)])
+
+
+def render_shorts(media: Path, cands: list[Candidate], words: list[Word], out_dir: Path, count: int,
+                  layout: str = "crop", crop_x: float = 0.5, captions: bool = True, audio_track: int = 0) -> list[Path]:
+    """Render the top `count` candidates as 1080x1920 mp4s. Never touches the source."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    made: list[Path] = []
+    gpu = has_nvenc()
+    for i, c in enumerate(cands[:count], 1):
+        out = out_dir / f"{i:02d}_{fmt(c.start).replace(':', '-')}.mp4"
+        if out.resolve() == media.resolve():
+            raise SystemExit("Refusing to write over the source recording.")
+        with tempfile.TemporaryDirectory(prefix="clipfinder-cap-") as tmp:
+            ass = None
+            chunks = caption_chunks(words, c.start, c.end) if captions else []
+            if chunks:
+                (Path(tmp) / "caps.ass").write_text(ass_captions(chunks), encoding="utf-8")
+                ass = "caps.ass"  # relative: ffmpeg runs in tmp, which dodges Windows path escaping in filters
+            for use_gpu in ([True, False] if gpu else [False]):
+                cmd = render_cmd(media, c.start, c.end, out.resolve(), layout, crop_x, ass, audio_track, use_gpu)
+                r = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True)
+                if r.returncode == 0:
+                    break
+            else:
+                raise SystemExit(f"ffmpeg failed on clip {i}: {r.stderr.strip()[-400:]}")
+        made.append(out)
+        print(f"  rendered {out.name}", file=sys.stderr)
+    return made
+
+
+def has_video(media: Path) -> bool:
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type",
+                        "-of", "csv=p=0", str(media)], capture_output=True, text=True)
+    return "video" in r.stdout
+
+
 def probe_fps(media: Path) -> int:
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
@@ -409,6 +552,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-transcribe", action="store_true", help="skip speech; use marks + audio energy only")
     p.add_argument("--fps", type=int, help="timeline frame rate for the EDL markers (default: the video's)")
     p.add_argument("--timeline-start-hour", type=int, default=1, help="timeline start hour for the EDL (Resolve default 1)")
+    p.add_argument("--render", type=int, metavar="N", default=0,
+                   help="also render the top N as vertical 1080x1920 mp4s (into <csv name>_clips/)")
+    p.add_argument("--layout", choices=["crop", "fit"], default="crop",
+                   help="crop = fill with a 9:16 slice; fit = whole frame over a blurred background")
+    p.add_argument("--crop-x", type=float, default=0.5, help="where to slice for --layout crop: 0 left, 0.5 centre, 1 right")
+    p.add_argument("--no-captions", action="store_true", help="render without burned-in captions")
+    p.add_argument("--audio-track", type=int, default=0, help="which audio stream goes into the rendered shorts")
     args = p.parse_args(argv)
 
     if not args.recording.is_file():
@@ -426,9 +576,11 @@ def main(argv: list[str] | None = None) -> int:
         db = energy_curve(samples)
         peaks = find_peaks(db)
         segments: list[Segment] = []
+        words: list[Word] = []
         if not args.no_transcribe:
             print(f"Transcribing with {args.model}...", file=sys.stderr)
-            segments = transcribe(audio, args.model)
+            words = transcribe_words(audio, args.model)
+            segments = phrases(words)
 
     if duration < MIN_CLIP_S:
         raise SystemExit("Recording is shorter than 15 seconds.")
@@ -440,6 +592,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(kept)} clips -> {out} (+ Resolve markers: {edl.name})", file=sys.stderr)
     for i, c in enumerate(kept[:5], 1):
         print(f"  {i}. {fmt(c.start)}-{fmt(c.end)}  {'; '.join(c.reasons)}", file=sys.stderr)
+    if args.render > 0:
+        if not has_video(args.recording):
+            print("No video stream; skipping --render.", file=sys.stderr)
+        else:
+            clips = out.parent / f"{out.stem}_clips"
+            print(f"Rendering top {min(args.render, len(kept))} as vertical shorts -> {clips}", file=sys.stderr)
+            render_shorts(args.recording, kept, words, clips, args.render, args.layout, args.crop_x,
+                          not args.no_captions, args.audio_track)
     return 0
 
 
