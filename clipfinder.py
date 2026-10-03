@@ -4,19 +4,24 @@
 Usage:
     python clipfinder.py recording.mp4 --notes marks.txt
     python clipfinder.py recording.mp4 --no-transcribe        # audio energy + marks only
+    python clipfinder.py recording.mp4 --export-dir shorts-demo/rough-cuts   # also cut real clip files
 
 Signals, strongest first:
   1. your marked timestamps (notes file, one per line: "12:34 clutch 1v3")
   2. audio-energy spikes (loud moments vs. the recording's own baseline)
   3. hype words in the transcript (faster-whisper, GPU if available)
 
-Read-only on your media: the audio is decoded by ffmpeg into a temp folder that
-is deleted afterwards. The only file written is the CSV report.
+Read-only on your media unless --export-dir is given: the audio is decoded by
+ffmpeg into a temp folder that is deleted afterwards. Without --export-dir the
+only file written is the CSV (+ EDL) report. With --export-dir, the top clips
+are also cut into real files there plus a manifest.json - it never overwrites
+or deletes an existing file; point it at an empty folder.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import re
 import shutil
@@ -38,6 +43,9 @@ LEAD_IN_S = 10.0          # context before the peak moment (the setup)
 MARK_RADIUS_S = 20.0      # a candidate within this distance of a mark gets the mark bonus
 MIN_RISE_DB = 6.0         # a spike must be at least this much louder than the typical level
 SNAP_TOLERANCE_S = 4.0   # move clip edges to sentence boundaries within this distance
+EXPORT_MIN = 5            # fewest rough-cuts a demo pack should have
+EXPORT_MAX = 8            # most rough-cuts a demo pack needs
+SEEK_PAD_S = 5.0          # fast input-seek this far before the real start, then trim precisely
 
 HYPE_WORDS = [
     "let's go", "lets go", "oh my god", "omg", "no way", "what", "clutch", "insane",
@@ -348,6 +356,66 @@ def fill_to_minimum(kept: list[Candidate], db: np.ndarray, duration: float, segm
     return kept
 
 
+def caption_for(c: Candidate) -> str:
+    """A caption grounded in what was actually detected - never invented."""
+    for r in c.reasons:
+        if r.startswith("you marked it ("):
+            return r[len("you marked it ("):-1]
+    for r in c.reasons:
+        if r.startswith("reaction: "):
+            return r[len("reaction: "):].replace('"', "")
+    if c.reasons:
+        return c.reasons[0]
+    return "highlight moment"
+
+
+def cut_clip(media: Path, start: float, end: float, out: Path) -> None:
+    """Cut [start, end) out of media into out, re-encoding for an accurate trim.
+
+    Fast-seeks to a little before `start` (cheap even deep into a 2h recording),
+    then trims the remainder precisely rather than decoding from time zero.
+    """
+    pad = min(SEEK_PAD_S, start)
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start - pad:.3f}", "-i", str(media),
+           "-ss", f"{pad:.3f}", "-t", f"{end - start:.3f}", str(out)]
+    subprocess.run(cmd, check=True)
+
+
+def export_rough_cuts(media: Path, cands: list[Candidate], export_dir: Path,
+                      count: int = EXPORT_MAX) -> list[dict]:
+    """Cut the top `count` candidates into real clip files + a manifest.json.
+
+    Never touches an existing file: every target path (clips and manifest.json)
+    must not already exist, or this raises before cutting anything.
+    """
+    count = max(1, min(count, len(cands)))
+    top = cands[:count]
+    suffix = media.suffix or ".mp4"
+    targets = [export_dir / f"clip_{i:02d}{suffix}" for i in range(1, len(top) + 1)]
+    manifest_path = export_dir / "manifest.json"
+    for t in [*targets, manifest_path]:
+        if t.exists():
+            raise SystemExit(f"Refusing to overwrite existing file: {t}. "
+                              "Use an empty --export-dir.")
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    entries = []
+    for i, (c, out) in enumerate(zip(top, targets), 1):
+        cut_clip(media, c.start, c.end, out)
+        entries.append({
+            "rank": i,
+            "file": out.name,
+            "source_start": fmt(c.start),
+            "source_end": fmt(c.end),
+            "duration_s": round(c.duration),
+            "moment": "; ".join(c.reasons) or "strongest remaining moment",
+            "transcript": c.text[:200],
+            "suggested_caption": caption_for(c),
+        })
+    manifest_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    return entries
+
+
 def write_csv(path: Path, cands: list[Candidate]) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -409,6 +477,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-transcribe", action="store_true", help="skip speech; use marks + audio energy only")
     p.add_argument("--fps", type=int, help="timeline frame rate for the EDL markers (default: the video's)")
     p.add_argument("--timeline-start-hour", type=int, default=1, help="timeline start hour for the EDL (Resolve default 1)")
+    p.add_argument("--export-dir", type=Path,
+                   help="also cut the top clips into real files here (clip_01.mp4, ...) + manifest.json; "
+                        "must not already exist / be non-empty")
+    p.add_argument("--export-count", type=int, default=EXPORT_MAX,
+                   help=f"how many top clips to export (default {EXPORT_MAX}, floor {EXPORT_MIN})")
     args = p.parse_args(argv)
 
     if not args.recording.is_file():
@@ -440,6 +513,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(kept)} clips -> {out} (+ Resolve markers: {edl.name})", file=sys.stderr)
     for i, c in enumerate(kept[:5], 1):
         print(f"  {i}. {fmt(c.start)}-{fmt(c.end)}  {'; '.join(c.reasons)}", file=sys.stderr)
+    if args.export_dir:
+        count = max(EXPORT_MIN, min(EXPORT_MAX, args.export_count))
+        entries = export_rough_cuts(args.recording, kept, args.export_dir, count)
+        print(f"Exported {len(entries)} rough-cut clips -> {args.export_dir} (+ manifest.json)", file=sys.stderr)
     return 0
 
 
