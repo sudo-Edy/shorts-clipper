@@ -1,0 +1,82 @@
+[
+  {
+    "rank": 1,
+    "file": "clip_01.wav",
+    "source_start": "0:00:50",
+    "source_end": "0:01:20",
+    "duration_s": 30,
+    "moment": "you marked it (clutch 1v3); big audio spike",
+    "transcript": "",
+    "suggested_caption": "clutch 1v3"
+  },
+  {
+    "rank": 2,
+    "file": "clip_02.wav",
+    "source_start": "0:13:40",
+    "source_end": "0:14:10",
+    "duration_s": 30,
+    "moment": "you marked it (victory); big audio spike",
+    "transcript": "",
+    "suggested_caption": "victory"
+  },
+  {
+    "rank": 3,
+    "file": "clip_03.wav",
+    "source_start": "0:06:21",
+    "source_end": "0:06:51",
+    "duration_s": 30,
+    "moment": "you marked it (ace round); big audio spike",
+    "transcript": "",
+    "suggested_caption": "ace round"
+  },
+  {
+    "rank": 4,
+    "file": "clip_04.wav",
+    "source_start": "0:10:50",
+    "source_end": "0:11:20",
+    "duration_s": 30,
+    "moment": "you marked it (near-death comeback); big audio spike",
+    "transcript": "",
+    "suggested_caption": "near-death comeback"
+  },
+  {
+    "rank": 5,
+    "file": "clip_05.wav",
+    "source_start": "0:03:35",
+    "source_end": "0:04:05",
+    "duration_s": 30,
+    "moment": "you marked it (boss fight start); big audio spike",
+    "transcript": "",
+    "suggested_caption": "boss fight start"
+  },
+  {
+    "rank": 6,
+    "file": "clip_06.wav",
+    "source_start": "0:04:32",
+    "source_end": "0:05:02",
+    "duration_s": 30,
+    "moment": "big audio spike",
+    "transcript": "",
+    "suggested_caption": "big audio spike"
+  },
+  {
+    "rank": 7,
+    "file": "clip_07.wav",
+    "source_start": "0:02:42",
+    "source_end": "0:03:12",
+    "duration_s": 30,
+    "moment": "big audio spike",
+    "transcript": "",
+    "suggested_caption": "big audio spike"
+  },
+  {
+    "rank": 8,
+    "file": "clip_08.wav",
+    "source_start": "0:11:52",
+    "source_end": "0:12:22",
+    "duration_s": 30,
+    "moment": "big audio spike",
+    "transcript": "",
+    "suggested_caption": "big audio spike"
+  }
+]

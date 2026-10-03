@@ -35,6 +35,23 @@ ffmpeg must be on PATH. The first run downloads the Whisper model (large-v3 ≈ 
 Options: `--count 20` (max clips), `--model medium` (faster, less accurate),
 `--no-transcribe` (marks + loudness only), `--out path.csv`.
 
+## Cutting real clip files (demo packs, prospect sends)
+
+The CSV/EDL above are for editing in Resolve. To get actual playable clip
+files (e.g. a demo pack to send prospects), add `--export-dir`:
+
+```
+python clipfinder.py "D:\recordings\session1.mp4" --notes marks.txt \
+    --export-dir shorts-demo/rough-cuts --export-count 8
+```
+
+This cuts the top 5-8 ranked clips (same ranking as the CSV) into
+`shorts-demo/rough-cuts/clip_01.mp4` ... and a `manifest.json` listing, per
+clip: `source_start`/`source_end`, `duration_s`, `moment` (why it was picked),
+a transcript excerpt, and a `suggested_caption` grounded in the detected mark
+label or reaction words (never invented). It refuses to run if any target
+file already exists - point it at a fresh/empty folder.
+
 ## How clips are ranked
 
 | Signal | Points |
