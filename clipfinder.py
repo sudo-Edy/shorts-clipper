@@ -434,8 +434,32 @@ def _ass_time(t: float) -> str:
     return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
 
 
-def ass_captions(chunks: list[tuple[float, float, str]], width: int = 1080, height: int = 1920) -> str:
-    """Big bold outlined captions in the lower third, the standard Shorts look."""
+def hook_lines(text: str, max_chars: int = 18, max_lines: int = 3) -> str:
+    """Wrap a hook title into at most 3 short lines (ASS \\N breaks), cutting with an ellipsis if longer."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > max_chars:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip(".,;:") + "..."
+    return "\\N".join(l.replace("{", "(").replace("}", ")") for l in lines)
+
+
+def ass_captions(chunks: list[tuple[float, float, str]], width: int = 1080, height: int = 1920,
+                 hook: str | None = None, hook_end: float | None = None, accent: str | None = None,
+                 style: str = "bold") -> str:
+    """Big bold outlined captions in the lower third, the standard Shorts look.
+    style="minimal": smaller regular-weight captions, thin outline, lower (documentary look)."""
+    cap = ("Style: Cap,Arial Black,112,&H00FFFFFF,&H0000FFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,7,3,2,80,80,"
+           f"{int(height * 0.28)},1\n") if style != "minimal" else (
+           "Style: Cap,Arial,70,&H00FFFFFF,&H0000FFFF,&H00000000,&H50000000,0,0,0,0,100,100,0,0,1,3,1,2,90,90,"
+           f"{int(height * 0.24)},1\n")
     head = (
         "[Script Info]\nScriptType: v4.00+\n"
         f"PlayResX: {width}\nPlayResY: {height}\nWrapStyle: 0\n\n"
@@ -443,12 +467,20 @@ def ass_captions(chunks: list[tuple[float, float, str]], width: int = 1080, heig
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding\n"
-        "Style: Cap,Arial Black,112,&H00FFFFFF,&H0000FFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,7,3,2,80,80,"
-        f"{int(height * 0.28)},1\n\n"
+        + cap +
+        # Hook title: top of frame, below the platform UI (~15% down), white on a dark box
+        "Style: Hook,Arial Black,74,&H00FFFFFF,&H0000FFFF,&H00101010,&HA0000000,-1,0,0,0,100,100,0,0,3,14,0,8,90,90,"
+        f"{int(height * 0.15)},1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     lines = [f"Dialogue: 0,{_ass_time(s)},{_ass_time(e)},Cap,,0,0,0,,{{\\fscx85\\fscy85\\t(0,80,\\fscx100\\fscy100)}}"
              f"{t.replace('{', '(').replace('}', ')')}" for s, e, t in chunks]
+    if hook and hook.strip():
+        # optional per-clip accent (RRGGBB; ASS wants BGR) so a batch of Shorts doesn't look templated
+        tint = (f"\\c&H{(accent[4:6] + accent[2:4] + accent[0:2]).upper()}&"
+                if accent and re.fullmatch(r"[0-9A-Fa-f]{6}", accent) else "")
+        lines.insert(0, f"Dialogue: 1,{_ass_time(0)},{_ass_time(hook_end if hook_end else 3600)},Hook,,0,0,0,,"
+                        f"{{\\fad(120,0){tint}}}{hook_lines(hook.strip().upper())}")
     return head + "\n".join(lines) + "\n"
 
 
@@ -494,7 +526,9 @@ def render_cmd(media: Path, start: float, end: float, out: Path, layout: str = "
 
 def render_shorts(media: Path, cands: list[Candidate], words: list[Word], out_dir: Path, count: int,
                   layout: str = "crop", crop_x: float = 0.5, captions: bool = True, audio_track: int = 0,
-                  labels: list[int] | None = None) -> list[Path]:
+                  labels: list[int] | None = None, hooks: list[str] | None = None,
+                  names: list[str] | None = None, accents: list[str] | None = None,
+                  caption_style: str = "bold") -> list[Path]:
     """Render the top `count` candidates as 1080x1920 mp4s. Never touches the source.
     labels: the rank number to put in each file name (default 1, 2, 3...)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -502,14 +536,17 @@ def render_shorts(media: Path, cands: list[Candidate], words: list[Word], out_di
     gpu = has_nvenc()
     for i, c in enumerate(cands[:count], 1):
         n = labels[i - 1] if labels and i - 1 < len(labels) else i
-        out = out_dir / f"{n:02d}_{fmt(c.start).replace(':', '-')}.mp4"
+        name = names[i - 1] if names and i - 1 < len(names) and names[i - 1] else f"{n:02d}_{fmt(c.start).replace(':', '-')}"
+        out = out_dir / (re.sub(r"[^\w\-]+", "_", name)[:60] + ".mp4")
+        hook = hooks[i - 1] if hooks and i - 1 < len(hooks) else None
+        accent = accents[i - 1] if accents and i - 1 < len(accents) else None
         if out.resolve() == media.resolve():
             raise SystemExit("Refusing to write over the source recording.")
         with tempfile.TemporaryDirectory(prefix="clipfinder-cap-") as tmp:
             ass = None
             chunks = caption_chunks(words, c.start, c.end) if captions else []
-            if chunks:
-                (Path(tmp) / "caps.ass").write_text(ass_captions(chunks), encoding="utf-8")
+            if chunks or hook:
+                (Path(tmp) / "caps.ass").write_text(ass_captions(chunks, hook=hook, accent=accent, style=caption_style), encoding="utf-8")
                 ass = "caps.ass"  # relative: ffmpeg runs in tmp, which dodges Windows path escaping in filters
             for use_gpu in ([True, False] if gpu else [False]):
                 cmd = render_cmd(media, c.start, c.end, out.resolve(), layout, crop_x, ass, audio_track, use_gpu)
@@ -547,6 +584,53 @@ def safe_output(out: Path, media: Path) -> Path:
     return out
 
 
+def load_words(path: Path) -> list[Word]:
+    import json
+    return [(float(a), float(b), str(w)) for a, b, w in json.loads(path.read_text(encoding="utf-8"))]
+
+
+def save_words(path: Path, words: list[Word]) -> None:
+    import json
+    if path.suffix.lower() in MEDIA_EXTS:
+        raise SystemExit("Refusing to write over a media file.")
+    path.write_text(json.dumps([[round(a, 3), round(b, 3), w] for a, b, w in words], ensure_ascii=False), encoding="utf-8")
+
+
+def run_explicit(args) -> int:
+    """Tool mode for CreatorOS: transcribe once (--transcribe-only --words-out), then render an exact
+    clip list chosen elsewhere (--clips, reusing --words-in). Read-only on the source, like the rest."""
+    import json
+    if not args.recording.is_file():
+        raise SystemExit(f"Not found: {args.recording}")
+    if not shutil.which("ffmpeg"):
+        raise SystemExit("ffmpeg is not on PATH.")
+    if args.words_in:
+        words = load_words(args.words_in)
+    elif args.no_transcribe:
+        words = []
+    else:
+        with tempfile.TemporaryDirectory(prefix="clipfinder-") as tmp:
+            audio = extract_audio(args.recording, Path(tmp))
+            print(f"Transcribing with {args.model}...", file=sys.stderr)
+            words = transcribe_words(audio, args.model)
+    if args.words_out:
+        save_words(args.words_out, words)
+        print(f"{len(words)} words -> {args.words_out}", file=sys.stderr)
+    if not args.clips:
+        return 0
+    spec = json.loads(args.clips.read_text(encoding="utf-8"))
+    cands = [Candidate(float(c["start"]), float(c["end"])) for c in spec]
+    if any(c.end <= c.start for c in cands):
+        raise SystemExit("Every clip needs end > start.")
+    out_dir = args.clips_dir or Path(f"{args.recording.stem}_shorts_clips")
+    made = render_shorts(args.recording, cands, words, out_dir, len(cands), args.layout, args.crop_x,
+                         not args.no_captions, args.audio_track,
+                         hooks=[c.get("hook") or "" for c in spec], names=[c.get("name") or "" for c in spec],
+                         accents=[c.get("accent") or "" for c in spec], caption_style=args.caption_style)
+    print(json.dumps({"rendered": [str(m) for m in made]}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("recording", type=Path)
@@ -563,8 +647,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="crop = fill with a 9:16 slice; fit = whole frame over a blurred background")
     p.add_argument("--crop-x", type=float, default=0.5, help="where to slice for --layout crop: 0 left, 0.5 centre, 1 right")
     p.add_argument("--no-captions", action="store_true", help="render without burned-in captions")
+    p.add_argument("--caption-style", choices=["bold", "minimal"], default="bold",
+                   help="bold = big Shorts captions (default); minimal = smaller documentary-style captions")
     p.add_argument("--audio-track", type=int, default=0, help="which audio stream goes into the rendered shorts")
+    p.add_argument("--words-out", type=Path, help="write the word-timed transcript as JSON (for other tools)")
+    p.add_argument("--words-in", type=Path, help="reuse a word-timed transcript JSON instead of transcribing again")
+    p.add_argument("--transcribe-only", action="store_true", help="only transcribe (use with --words-out); no ranking")
+    p.add_argument("--clips", type=Path, help="JSON list of clips to render exactly: "
+                   "[{\"start\": s, \"end\": s, \"hook\": \"top text\", \"name\": \"file name\"}] (into --clips-dir)")
+    p.add_argument("--clips-dir", type=Path, help="output folder for --clips (default: <recording name>_shorts_clips)")
     args = p.parse_args(argv)
+    if args.clips or args.transcribe_only:
+        return run_explicit(args)
 
     if not args.recording.is_file():
         raise SystemExit(f"Not found: {args.recording}")

@@ -200,3 +200,40 @@ def test_phrases_capped_in_nonstop_chatter():
     words = [(i * 0.4, i * 0.4 + 0.3, " w") for i in range(100)]   # 40 s, never pauses
     ph = phrases(words)
     assert len(ph) >= 4 and all(p.end - p.start <= 10.0 for p in ph)
+
+
+def test_hook_overlay_wraps_and_tints():
+    from clipfinder import ass_captions, hook_lines
+    assert hook_lines("this is a very long hook title that keeps going and going forever").count(r"\N") <= 2
+    ass = ass_captions([(0.0, 1.0, "HI")], hook="Why nobody talks about this", accent="FFD400")
+    hook_line = [l for l in ass.splitlines() if ",Hook," in l and l.startswith("Dialogue")][0]
+    assert r"\c&H00D4FF&" in hook_line and "WHY NOBODY" in hook_line
+    assert "Style: Hook" in ass
+
+
+def test_explicit_clips_mode_renders_named_clips_with_saved_words(tmp_path):
+    import json
+    import subprocess
+    from clipfinder import main
+    src = tmp_path / "doc.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=12",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=12", "-c:v", "libx264", "-c:a", "aac",
+                    "-shortest", str(src)], check=True)
+    words = tmp_path / "w.json"
+    words.write_text(json.dumps([[1.0, 1.4, " The"], [1.4, 1.9, " truth"]]), encoding="utf-8")
+    clips = tmp_path / "c.json"
+    clips.write_text(json.dumps([{"start": 0.5, "end": 6.5, "hook": "The truth nobody tells you", "name": "01 truth", "accent": "33CCFF"},
+                                 {"start": 6.0, "end": 11.0, "hook": "", "name": "02 next"}]), encoding="utf-8")
+    out = tmp_path / "out"
+    assert main([str(src), "--words-in", str(words), "--clips", str(clips), "--clips-dir", str(out), "--layout", "fit"]) == 0
+    assert sorted(p.name for p in out.glob("*.mp4")) == ["01_truth.mp4", "02_next.mp4"]
+    words2 = tmp_path / "w2.json"
+    assert main([str(src), "--transcribe-only", "--no-transcribe", "--words-out", str(words2)]) == 0
+    assert json.loads(words2.read_text(encoding="utf-8")) == []
+
+
+def test_minimal_caption_style_is_smaller_and_regular_weight():
+    from clipfinder import ass_captions
+    bold = [l for l in ass_captions([(0.0, 1.0, "HI")]).splitlines() if l.startswith("Style: Cap")][0]
+    mini = [l for l in ass_captions([(0.0, 1.0, "HI")], style="minimal").splitlines() if l.startswith("Style: Cap")][0]
+    assert "Arial Black,112" in bold and "Arial,70" in mini

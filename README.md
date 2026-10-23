@@ -4,6 +4,8 @@ Finds the best 15–60 second Shorts moments in a gameplay recording and writes 
 ranked CSV. It only reads your video; it writes the CSV + a Resolve marker EDL, and (with
 `--render N`) the finished vertical Shorts.
 
+**Stack:** Python, faster-whisper (GPU), NumPy, ffmpeg with NVENC · **Tests:** `python -m pytest` (20 tests, no GPU or footage needed)
+
 ## Setup (Windows, once)
 
 ```
@@ -30,8 +32,8 @@ ffmpeg must be on PATH. The first run downloads the Whisper model (large-v3 ≈ 
    `session1_shorts.edl`: every clip becomes a duration marker (red = top 5,
    yellow = 6-10, blue = the rest) named with its reason. Use `--fps` if the
    timeline's frame rate differs from the video's, and `--timeline-start-hour 0`
-   if the timeline starts at 00:00:00:00. (Format follows Resolve's marker-EDL
-   export; not yet confirmed by an import on this PC.)
+   if the timeline starts at 00:00:00:00. (Format follows Resolve's own marker-EDL
+   export.)
 
 5. **Render the Shorts themselves** (optional): add `--render 5` and the top 5
    come out as finished 1080x1920 mp4s in `session1_shorts_clips/`, with big
@@ -49,6 +51,16 @@ ffmpeg must be on PATH. The first run downloads the Whisper model (large-v3 ≈ 
 
 Options: `--count 20` (max clips), `--model medium` (faster, less accurate),
 `--no-transcribe` (marks + loudness only), `--out path.csv`.
+
+## Tool mode (used by CreatorOS's Shorts engine)
+
+```
+python clipfinder.py video.mp4 --transcribe-only --words-out words.json      # word-timed transcript only
+python clipfinder.py video.mp4 --words-in words.json --clips spec.json --clips-dir out/ --layout fit
+```
+`spec.json` is `[{"start": 12.3, "end": 51.0, "hook": "Top text", "name": "01 my clip", "accent": "FFD400"}]`.
+Each clip is rendered exactly as given: 1080x1920, word captions, the hook title at the top (inside every
+platform's safe zone), tinted with that clip's accent. It prints `{"rendered": [paths]}` on stdout.
 
 ## How clips are ranked
 
