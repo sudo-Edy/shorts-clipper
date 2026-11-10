@@ -1,5 +1,7 @@
 # shorts-clipper
 
+![tests](https://github.com/sudo-Edy/shorts-clipper/actions/workflows/tests.yml/badge.svg)
+
 Finds the best 15–60 second Shorts moments in a gameplay recording and writes a
 ranked CSV. It only reads your video; it writes the CSV + a Resolve marker EDL, and (with
 `--render N`) the finished vertical Shorts.
